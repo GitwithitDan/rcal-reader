@@ -521,8 +521,39 @@ function renderCal(){
   document.getElementById('calMonthLabel').textContent=label;
   const allOccs={};
   strandData.events.forEach(ev=>{
+    const color=catColor(ev.category);
+    // Span-style events: fill every day in the month that falls within the span
+    if(isSeasonalFile&&ev.recurrence&&ev.recurrence.length&&ev.recurrence[0].pattern==='annual'){
+      const rule=ev.recurrence[0];
+      const span=getSpanForYear(rule,calYear);
+      const{startMonth,startDay,endMonth,endDay}=span;
+      const daysInCurMonth=new Date(calYear,calMonth+1,0).getDate();
+      for(let d=1;d<=daysInCurMonth;d++){
+        const inSpan=(()=>{
+          const sm=startMonth,sd=startDay,em=endMonth,ed=endDay,m=calMonth;
+          if(sm<=em){
+            if(m<sm||m>em)return false;
+            if(m===sm&&d<sd)return false;
+            if(m===em&&d>ed)return false;
+            return true;
+          } else {
+            // wraps year
+            if(m>=sm){if(m===sm&&d<sd)return false;return true;}
+            if(m<=em){if(m===em&&d>ed)return false;return true;}
+            return false;
+          }
+        })();
+        if(inSpan){
+          const dateStr=`${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          if(!allOccs[dateStr])allOccs[dateStr]=[];
+          allOccs[dateStr].push({date:dateStr,eventName:ev.name,color});
+        }
+      }
+      return;
+    }
+    // Normal occurrence-based events
     const occs=getOccurrences(ev,200);
-    occs.forEach(o=>{const[y,m]=o.date.split('-').map(Number);if(y===calYear&&m-1===calMonth){if(!allOccs[o.date])allOccs[o.date]=[];allOccs[o.date].push({...o,eventName:ev.name,color:catColor(ev.category)});}});
+    occs.forEach(o=>{const[y,m]=o.date.split('-').map(Number);if(y===calYear&&m-1===calMonth){if(!allOccs[o.date])allOccs[o.date]=[];allOccs[o.date].push({...o,eventName:ev.name,color});}});
   });
   const grid=document.getElementById('calGrid');grid.innerHTML='';
   ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(d=>{const h=document.createElement('div');h.className='cal-day-header';h.textContent=d;grid.appendChild(h);});
