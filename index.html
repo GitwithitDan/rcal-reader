@@ -325,7 +325,7 @@ footer a:hover { color: var(--ink); }
 
   <!-- HERO -->
   <div class="hero">
-    <div class="eyebrow">Open Format · Free to Use</div>
+    <div class="eyebrow">Open Format · v0.2 · Free to Use</div>
     <h1>The recurring event file<br><em>nobody knew they needed</em></h1>
     <p class="hero-desc">
       .rcal is a simple, open file format for describing events that repeat —
@@ -544,6 +544,25 @@ footer a:hover { color: var(--ink); }
 
   <hr class="divider">
 
+  <!-- SEASONAL SPANS -->
+  <section>
+    <h2>Seasonal spans &amp; fuzzy dates</h2>
+    <p>
+      Not every recurring thing happens on a specific day of the week. Some things are seasons — summer, tax season, a sports league, a farmers market window. .rcal v0.2 adds support for describing these as <strong>span-style events</strong>: a start and end point rather than a list of occurrences.
+    </p>
+    <p>
+      Two new fields on recurrence rules make this possible: <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">season_start_day</code> and <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">season_end_day</code> let you specify the exact day within a month — not just the month itself. Pair them with the existing <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">season_start</code> and <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">season_end</code> fields for full precision.
+    </p>
+    <div class="callout">
+      Some dates shift year to year — astronomical summer starts on June 20 some years, June 21 others. The new <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">fuzzy_start</code> and <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">fuzzy_end</code> boolean fields tell apps to render a <strong>~</strong> symbol at that edge and, where known, recalculate the exact date for the viewed year rather than using a fixed day.
+    </div>
+    <p>
+      Apps that understand span-style files — like the <a href="https://rcal.dtdm.us/reader" style="color:var(--blue);text-decoration:none;">reader here</a> — display these as solid colored blocks across a year view rather than individual occurrence chips.
+    </p>
+  </section>
+
+  <hr class="divider">
+
   <!-- LIVE VS STATIC -->
   <section>
     <h2>Live files vs. static files</h2>
@@ -576,7 +595,7 @@ footer a:hover { color: var(--ink); }
 <div class="page">
   <footer>
     <span>A resource by <a href="https://dtdm.us">Dan the Digital Man</a></span>
-    <span>.rcal is CC0 — public domain, no license required</span>
+    <span>.rcal v0.2 · CC0 — public domain, no license required</span>
   </footer>
 </div>
 
