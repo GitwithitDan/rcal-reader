@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>.rcal — A Simple Format for Recurring Events</title>
+<meta name="description" content="A plain-English guide to .rcal, the open file format for recurring real-world events, created by EventStrand.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #F7F5F0;
+  --surface:  #EEEAE2;
+  --border:   #D8D3C8;
+  --ink:      #1A1A1A;
+  --muted:    #6B6560;
+  --blue:     #4A8FE7;
+  --blue-bg:  #EBF2FD;
+  --mono:     'JetBrains Mono', monospace;
+  --serif:    'DM Serif Display', Georgia, serif;
+  --sans:     'Inter', system-ui, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+/* ── Layout ── */
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+/* ── Nav ── */
+nav {
+  padding: 20px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 64px;
+}
+.nav-brand {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.nav-brand span { color: var(--ink); }
+.nav-cta {
+  background: var(--blue);
+  color: #fff;
+  text-decoration: none;
+  padding: 7px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.nav-cta:hover { opacity: 0.85; }
+
+/* ── Hero ── */
+.hero {
+  margin-bottom: 64px;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--blue);
+  margin-bottom: 16px;
+}
+h1 {
+  font-family: var(--serif);
+  font-size: clamp(36px, 6vw, 54px);
+  line-height: 1.1;
+  margin-bottom: 20px;
+  letter-spacing: -0.01em;
+}
+h1 em {
+  font-style: italic;
+  color: var(--muted);
+}
+.hero-desc {
+  font-size: 18px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 560px;
+  margin-bottom: 32px;
+}
+
+/* ── Animated snippet ── */
+.snippet-wrap {
+  background: #1A1A1A;
+  border-radius: 10px;
+  padding: 24px;
+  overflow: hidden;
+  position: relative;
+}
+.snippet-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 14px;
+}
+.snippet-line {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.8;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  white-space: pre;
+}
+.snippet-line.visible { opacity: 1; transform: translateY(0); }
+.tok-key   { color: #79C0FF; }
+.tok-str   { color: #A5D6FF; }
+.tok-val   { color: #FFA657; }
+.tok-bool  { color: #3FB950; }
+.tok-punct { color: #6E7681; }
+.tok-num   { color: #D2A8FF; }
+
+/* ── Sections ── */
+section {
+  margin-bottom: 56px;
+}
+h2 {
+  font-family: var(--serif);
+  font-size: 28px;
+  line-height: 1.2;
+  margin-bottom: 16px;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 12px;
+  margin-top: 32px;
+}
+p {
+  color: #3A3630;
+  margin-bottom: 14px;
+}
+p:last-child { margin-bottom: 0; }
+
+/* ── Divider ── */
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 56px 0;
+}
+
+/* ── Cards ── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+.card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px;
+}
+.card-icon { font-size: 22px; margin-bottom: 8px; }
+.card-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.card-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+/* ── Field table ── */
+.field-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 16px;
+}
+.field-row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  border-bottom: 1px solid var(--border);
+}
+.field-row:last-child { border-bottom: none; }
+.field-name {
+  padding: 12px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--blue);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  padding-top: 14px;
+}
+.field-desc {
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #3A3630;
+  line-height: 1.55;
+}
+.field-desc em {
+  display: block;
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+  margin-top: 2px;
+  font-family: var(--mono);
+}
+
+/* ── Pill tags ── */
+.pill-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.pill {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 14px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.pill.cat {
+  border-left: 3px solid var(--blue);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* ── Callout ── */
+.callout {
+  background: var(--blue-bg);
+  border-left: 3px solid var(--blue);
+  border-radius: 0 6px 6px 0;
+  padding: 16px 20px;
+  margin: 24px 0;
+  font-size: 14px;
+  color: #2A4A6B;
+  line-height: 1.6;
+}
+
+/* ── CTA block ── */
+.cta-block {
+  background: var(--ink);
+  color: #fff;
+  border-radius: 12px;
+  padding: 40px 36px;
+  text-align: center;
+}
+.cta-block h2 {
+  font-family: var(--serif);
+  font-size: 30px;
+  color: #fff;
+  margin-bottom: 12px;
+}
+.cta-block p {
+  color: #8B949E;
+  margin-bottom: 28px;
+  font-size: 15px;
+}
+.cta-btn {
+  display: inline-block;
+  background: var(--blue);
+  color: #fff;
+  text-decoration: none;
+  padding: 12px 28px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  transition: opacity 0.15s;
+}
+.cta-btn:hover { opacity: 0.85; }
+.cta-secondary {
+  display: block;
+  margin-top: 14px;
+  font-size: 13px;
+  color: #555;
+}
+.cta-secondary a { color: #8B949E; }
+
+/* ── Footer ── */
+footer {
+  margin-top: 60px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+footer a { color: var(--muted); text-decoration: none; }
+footer a:hover { color: var(--ink); }
+
+@media (max-width: 560px) {
+  nav { margin-bottom: 40px; }
+  .hero { margin-bottom: 40px; }
+  .field-row { grid-template-columns: 1fr; }
+  .field-name { border-right: none; border-bottom: 1px solid var(--border); }
+  .cta-block { padding: 28px 20px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <nav>
+    <a class="nav-brand" href="https://dtdm.us"><span>DtDM</span>.us</a>
+    <a class="nav-cta" href="https://rcal.dtdm.us/reader">Open the Reader →</a>
+  </nav>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="eyebrow">Open Format · Free to Use</div>
+    <h1>The recurring event file<br><em>nobody knew they needed</em></h1>
+    <p class="hero-desc">
+      .rcal is a simple, open file format for describing events that repeat —
+      weekly, monthly, annually, or on whatever schedule makes sense.
+      It was created by <a href="https://eventstrand.com" style="color:var(--blue);text-decoration:none;">EventStrand</a> and released free for anyone to use.
+    </p>
+
+    <div class="snippet-wrap">
+      <div class="snippet-label">example .rcal file</div>
+      <div id="snippet"></div>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- WHAT IS IT -->
+  <section>
+    <h2>What is .rcal?</h2>
+    <p>
+      Most calendar formats are built for scheduling meetings — things you personally need to show up to. .rcal is built for something different: describing <strong>recurring real-world events</strong> that anyone might want to know about.
+    </p>
+    <p>
+      Think of a jazz bar's weekly residency, a farmers market that runs every Sunday from May through October, or your sister's birthday. These are things that come back. .rcal gives them a permanent, readable home.
+    </p>
+    <div class="callout">
+      .rcal is just a text file written in JSON — a format any developer already knows, and any curious person can read. No special software required to open one.
+    </div>
+    <p>
+      A .rcal file describes <em>one strand</em> — a named collection of events from a single publisher (a venue, a person, an organizer). Inside that file are the events themselves, each with a schedule, a category, and whatever details the publisher wants to share.
+    </p>
+  </section>
+
+  <hr class="divider">
+
+  <!-- WHY IT EXISTS -->
+  <section>
+    <h2>Why does this exist?</h2>
+    <p>
+      The standard calendar format (.ics / iCalendar) was designed for personal scheduling — your dentist appointment, your team standup. It wasn't built to describe a venue's ongoing programming in a way other apps could read and subscribe to.
+    </p>
+    <p>
+      .rcal fills that gap. It's designed to be <strong>published</strong> — shared at a permanent URL so that apps, scripts, or other people can always find the latest version of a schedule.
+    </p>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">📍</div>
+        <div class="card-title">Built for venues</div>
+        <div class="card-desc">Describe everything that happens at a place — different nights, different vibes, one file.</div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔁</div>
+        <div class="card-title">Built for recurring</div>
+        <div class="card-desc">Weekly, monthly, annual, seasonal, irregular — all supported natively.</div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔓</div>
+        <div class="card-title">No license, no fee</div>
+        <div class="card-desc">Public domain (CC0). Read it, build with it, fork it. No permission needed.</div>
+      </div>
+      <div class="card">
+        <div class="card-icon">👀</div>
+        <div class="card-title">Human-readable</div>
+        <div class="card-desc">Open it in any text editor and you can read it. No decoding required.</div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- HOW IT WORKS -->
+  <section>
+    <h2>How it works</h2>
+    <p>
+      Every .rcal file has three parts: a version number, an optional info block about the publisher, and a list of events.
+    </p>
+
+    <h3>The info block (meta)</h3>
+    <div class="field-list">
+      <div class="field-row">
+        <div class="field-name">title</div>
+        <div class="field-desc">The name of the place or person publishing the schedule.<em>e.g. "The Rusty Nail"</em></div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">type</div>
+        <div class="field-desc">What kind of publisher this is.<em>venue · artist · community · personal · retail · event</em></div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">timezone</div>
+        <div class="field-desc">The timezone all times in this file use.<em>e.g. "America/Chicago"</em></div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">live</div>
+        <div class="field-desc">If true, apps should check this file regularly for updates. Requires a source_url.</div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">location</div>
+        <div class="field-desc">Address, city, state, and coordinates. Inherited by all events unless overridden.</div>
+      </div>
+    </div>
+
+    <h3>Each event</h3>
+    <div class="field-list">
+      <div class="field-row">
+        <div class="field-name">id</div>
+        <div class="field-desc">A permanent identifier for this event. Never changes, even if the name does.<em>e.g. "friday-jazz"</em></div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">name</div>
+        <div class="field-desc">What the event is called.<em>e.g. "Friday Jazz Residency"</em></div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">category</div>
+        <div class="field-desc">The type of event. Used for filtering and discovery.</div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">vibe_tags</div>
+        <div class="field-desc">Words that describe the feel of the event — not what it is, but what it's like.<em>mellow · social · curious · cozy · outdoor · celebratory…</em></div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">recurrence</div>
+        <div class="field-desc">The repeating schedule — weekly on Fridays, first Thursday of the month, every summer, etc.</div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">dates</div>
+        <div class="field-desc">A hand-picked list of specific dates, for events with no predictable pattern.</div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">date</div>
+        <div class="field-desc">A single date for one-off events. Can't be used alongside recurrence or dates.</div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">exceptions</div>
+        <div class="field-desc">Dates to skip, cancel, or modify — for holidays, closures, or last-minute changes.</div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">price</div>
+        <div class="field-desc">free · free_entry · ticketed · donation · members_only · varies · unknown</div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- SCHEDULE TYPES -->
+  <section>
+    <h2>Three ways to schedule an event</h2>
+    <p>Every event in a .rcal file uses one of three scheduling approaches — or a combination.</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">🔄</div>
+        <div class="card-title">Recurrence rules</div>
+        <div class="card-desc">You describe the pattern — "every Friday" or "the last Thursday of each month" — and apps calculate the actual dates. Best for regular, predictable schedules.</div>
+      </div>
+      <div class="card">
+        <div class="card-icon">📋</div>
+        <div class="card-title">Curated date list</div>
+        <div class="card-desc">You list the exact dates yourself, one by one. Good for events that happen somewhat regularly but on no fixed pattern.</div>
+      </div>
+      <div class="card">
+        <div class="card-icon">📌</div>
+        <div class="card-title">Single date</div>
+        <div class="card-desc">One specific date, one time. Use this for a special show, anniversary event, or anything that only happens once.</div>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:24px;">
+      Recurrence rules and a curated date list can coexist on the same event — useful for a regular weekly night that also has some confirmed extra dates. A single date, however, can't be mixed with either.
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- CATEGORIES & VIBES -->
+  <section>
+    <h2>Categories &amp; vibe tags</h2>
+    <p>
+      <strong>Categories</strong> describe what kind of event it is. <strong>Vibe tags</strong> describe what it feels like to be there. The idea is that you might not always know what you want to do — but you often know how you want to feel.
+    </p>
+
+    <h3>Categories</h3>
+    <div class="pill-grid">
+      <span class="pill cat">music</span>
+      <span class="pill cat">food_drink</span>
+      <span class="pill cat">fitness</span>
+      <span class="pill cat">arts</span>
+      <span class="pill cat">education</span>
+      <span class="pill cat">community</span>
+      <span class="pill cat">market</span>
+      <span class="pill cat">sport</span>
+      <span class="pill cat">comedy</span>
+      <span class="pill cat">theater</span>
+      <span class="pill cat">spiritual</span>
+      <span class="pill cat">maintenance</span>
+      <span class="pill cat">personal</span>
+      <span class="pill cat">general</span>
+    </div>
+
+    <h3>Vibe tags</h3>
+    <div class="pill-grid">
+      <span class="pill">mellow</span>
+      <span class="pill">social</span>
+      <span class="pill">restless</span>
+      <span class="pill">curious</span>
+      <span class="pill">spontaneous</span>
+      <span class="pill">solo</span>
+      <span class="pill">celebratory</span>
+      <span class="pill">cozy</span>
+      <span class="pill">active</span>
+      <span class="pill">outdoor</span>
+      <span class="pill">indoor</span>
+      <span class="pill">free</span>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- LIVE VS STATIC -->
+  <section>
+    <h2>Live files vs. static files</h2>
+    <p>
+      A .rcal file is <strong>static</strong> by default — it's downloaded once and stays as-is. That's fine for personal use or one-off events.
+    </p>
+    <p>
+      But the more powerful option is a <strong>live</strong> file: one hosted at a permanent URL, with <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">"live": true</code> in the meta block. Apps that support live strands will check back every 24 hours and pick up any changes automatically. The publisher updates one file; every subscriber sees the latest version.
+    </p>
+    <div class="callout">
+      This is the approach EventStrand uses. When a venue changes their Tuesday night to Wednesday, subscribers don't have to do anything — the update comes to them.
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- CTA -->
+  <div class="cta-block">
+    <h2>See it in action</h2>
+    <p>Drop any .rcal file into the reader and get a clean list and calendar view instantly. No account, no upload — runs entirely in your browser.</p>
+    <a class="cta-btn" href="https://rcal.dtdm.us/reader">Open the .rcal Reader →</a>
+    <span class="cta-secondary">
+      Format created by <a href="https://eventstrand.com">EventStrand</a> ·
+      Full spec at <a href="https://eventstrand.com/spec">eventstrand.com/spec</a>
+    </span>
+  </div>
+
+</div>
+
+<div class="page">
+  <footer>
+    <span>A resource by <a href="https://dtdm.us">Dan the Digital Man</a></span>
+    <span>.rcal is CC0 — public domain, no license required</span>
+  </footer>
+</div>
+
+<script>
+// Animated snippet
+const lines = [
+  `<span class="tok-punct">{</span>`,
+  `  <span class="tok-key">"rcal"</span><span class="tok-punct">:</span> <span class="tok-str">"0.1"</span><span class="tok-punct">,</span>`,
+  `  <span class="tok-key">"meta"</span><span class="tok-punct">:</span> <span class="tok-punct">{</span>`,
+  `    <span class="tok-key">"title"</span><span class="tok-punct">:</span> <span class="tok-str">"The Rusty Nail"</span><span class="tok-punct">,</span>`,
+  `    <span class="tok-key">"type"</span><span class="tok-punct">:</span> <span class="tok-str">"venue"</span><span class="tok-punct">,</span>`,
+  `    <span class="tok-key">"timezone"</span><span class="tok-punct">:</span> <span class="tok-str">"America/Chicago"</span><span class="tok-punct">,</span>`,
+  `    <span class="tok-key">"live"</span><span class="tok-punct">:</span> <span class="tok-bool">true</span>`,
+  `  <span class="tok-punct">},</span>`,
+  `  <span class="tok-key">"events"</span><span class="tok-punct">:</span> <span class="tok-punct">[{</span>`,
+  `    <span class="tok-key">"id"</span><span class="tok-punct">:</span> <span class="tok-str">"friday-jazz"</span><span class="tok-punct">,</span>`,
+  `    <span class="tok-key">"name"</span><span class="tok-punct">:</span> <span class="tok-str">"Friday Jazz Residency"</span><span class="tok-punct">,</span>`,
+  `    <span class="tok-key">"category"</span><span class="tok-punct">:</span> <span class="tok-str">"music"</span><span class="tok-punct">,</span>`,
+  `    <span class="tok-key">"vibe_tags"</span><span class="tok-punct">:</span> <span class="tok-punct">[</span><span class="tok-str">"mellow"</span><span class="tok-punct">,</span> <span class="tok-str">"social"</span><span class="tok-punct">],</span>`,
+  `    <span class="tok-key">"recurrence"</span><span class="tok-punct">:</span> <span class="tok-punct">[{</span>`,
+  `      <span class="tok-key">"pattern"</span><span class="tok-punct">:</span> <span class="tok-str">"weekly"</span><span class="tok-punct">,</span>`,
+  `      <span class="tok-key">"days"</span><span class="tok-punct">:</span> <span class="tok-punct">[</span><span class="tok-str">"friday"</span><span class="tok-punct">],</span>`,
+  `      <span class="tok-key">"time_start"</span><span class="tok-punct">:</span> <span class="tok-str">"21:00"</span>`,
+  `    <span class="tok-punct">}]</span>`,
+  `  <span class="tok-punct">}]</span>`,
+  `<span class="tok-punct">}</span>`,
+];
+
+const container = document.getElementById('snippet');
+lines.forEach(html => {
+  const div = document.createElement('div');
+  div.className = 'snippet-line';
+  div.innerHTML = html || '&nbsp;';
+  container.appendChild(div);
+});
+
+// Animate in on load
+const els = container.querySelectorAll('.snippet-line');
+els.forEach((el, i) => {
+  setTimeout(() => el.classList.add('visible'), 80 + i * 60);
+});
+</script>
+</body>
+</html>
