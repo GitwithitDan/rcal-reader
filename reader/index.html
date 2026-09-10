@@ -143,6 +143,22 @@
 
   .cat-music{background:#4A8FE7}.cat-food_drink{background:#E3B341}.cat-fitness{background:#3FB950}.cat-arts{background:#BC8CFF}.cat-education{background:#58A6FF}.cat-community{background:#79C0FF}.cat-market{background:#FFA657}.cat-sport{background:#FF7B72}.cat-comedy{background:#FFD700}.cat-theater{background:#D2A8FF}.cat-spiritual{background:#A5D6FF}.cat-maintenance{background:#8B949E}.cat-personal{background:#F0883E}.cat-general{background:#6E7681}
 
+  /* ── VALIDATION ── */
+  .validate-badge { display:inline-block;margin-left:6px;padding:0 6px;border-radius:10px;font-size:10px;font-family:var(--mono);line-height:16px;vertical-align:middle; }
+  .validate-badge:empty { display:none; }
+  .validate-badge.has-errors { background:var(--red);color:#fff; }
+  .validate-badge.has-warnings { background:var(--amber);color:#000; }
+  .validate-summary { padding:14px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;font-weight:500; }
+  .validate-summary.ok { background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:var(--green); }
+  .validate-summary.bad { background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:var(--red); }
+  .validate-section-title { font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:16px 0 8px;font-family:var(--mono); }
+  .validate-item { padding:10px 14px;border-radius:6px;margin-bottom:6px;font-size:12px;font-family:var(--mono);border:1px solid var(--border);background:var(--surface); }
+  .validate-item.err { border-color:rgba(248,81,73,.4);color:var(--red); }
+  .validate-item.warn { border-color:rgba(227,179,65,.4);color:var(--amber); }
+  .issue-badge { display:inline-block;margin-left:6px;font-size:10px;font-weight:700;border-radius:50%;width:16px;height:16px;line-height:14px;text-align:center;cursor:help;flex-shrink:0; }
+  .issue-badge.issue-error { background:rgba(248,81,73,.15);color:var(--red);border:1px solid var(--red); }
+  .issue-badge.issue-warning { background:rgba(227,179,65,.15);color:var(--amber);border:1px solid var(--amber); }
+
   @media(max-width:600px){.cal-cell{min-height:56px}.cal-event-pill{display:none}.cal-cell.has-events::after{content:'';display:block;width:6px;height:6px;border-radius:50%;background:var(--blue);margin:2px auto 0}.seasonal-grid{grid-template-columns:80px repeat(12,1fr)}.sg-event-label{font-size:11px;padding-right:6px}}
 </style>
 </head>
@@ -184,6 +200,7 @@
       <button class="tab-btn active" id="tabList" onclick="setView('list')">☰ List</button>
       <button class="tab-btn" id="tabCal" onclick="setView('cal')">▦ Calendar</button>
       <button class="tab-btn" id="tabSeasonal" onclick="setView('seasonal')" style="display:none">◈ Seasonal</button>
+      <button class="tab-btn" id="tabValidate" onclick="setView('validate')">✓ Validate<span class="validate-badge" id="validateBadge"></span></button>
     </div>
     <div class="event-count" id="eventCount"></div>
   </div>
@@ -206,6 +223,7 @@
       </div>
       <div class="seasonal-grid" id="seasonalGrid"></div>
     </div>
+    <div id="validateView"></div>
   </div>
 </div>
 
@@ -217,6 +235,7 @@ let strandData = null;
 let currentView = 'list';
 let calYear, calMonth, seasonalYear;
 let isSeasonalFile = false;
+let validationReport = null;
 
 // ─── Drag & Drop ─────────────────────────────────────────────────────
 const dropArea = document.getElementById('dropArea');
@@ -232,6 +251,9 @@ document.getElementById('resetBtn').addEventListener('click',()=>{
   document.getElementById('pasteArea').value='';
   document.getElementById('errorMsg').style.display='none';
   strandData=null;
+  validationReport=null;
+  document.getElementById('validateBadge').textContent='';
+  document.getElementById('validateBadge').className='validate-badge';
 });
 
 // ─── Parse ───────────────────────────────────────────────────────────
@@ -263,12 +285,124 @@ function detectSeasonal(data){
   }));
 }
 
+// ─── Validation (against .rcal spec v0.1) ─────────────────────────────
+const KNOWN_CATEGORIES=['music','food_drink','fitness','arts','education','community','market','sport','comedy','theater','spiritual','maintenance','personal','general'];
+const KNOWN_VIBES=['mellow','social','restless','curious','spontaneous','solo','celebratory','cozy','active','outdoor','indoor','free'];
+const KNOWN_PATTERNS=['daily','weekly','monthly_week','monthly_date','annual','weekdays'];
+const KNOWN_PRICES=['free','free_entry','ticketed','donation','members_only','varies','unknown'];
+const KNOWN_META_TYPES=['venue','artist','community','personal','retail','event'];
+const KNOWN_EXCEPTION_TYPES=['skip','cancelled_range','modified'];
+
+function escapeAttr(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');}
+
+// Hard-fail checks mirror the spec's stated fail conditions exactly (missing id/name,
+// duplicate id, missing pattern on a recurrence rule, one-off missing date, date
+// coexisting with recurrence/dates). Everything else — unknown category/tag/pattern,
+// missing recommended meta — is informational only, per the spec's "liberal parser" rule.
+function validateStrand(data){
+  const errors=[];const warnings=[];const eventIssues={};
+
+  if(data.rcal!==undefined && String(data.rcal)!=='0.1'){
+    warnings.push(`Unrecognized rcal version "${data.rcal}" — this reader is built against spec v0.1.`);
+  }
+  if(data.meta){
+    if(data.meta.type && !KNOWN_META_TYPES.includes(data.meta.type)){
+      warnings.push(`meta.type "${data.meta.type}" is not one of the recognized types (${KNOWN_META_TYPES.join(', ')}).`);
+    }
+    if(!data.meta.timezone) warnings.push('meta.timezone is not set — recommended for accurate scheduling across time zones.');
+  } else {
+    warnings.push('meta object is missing — optional per spec, but recommended.');
+  }
+  if(!data.events.length) warnings.push('events array is empty — this strand has no events.');
+
+  const idCounts={};
+  data.events.forEach(ev=>{ if(ev.id!=null && ev.id!=='') idCounts[ev.id]=(idCounts[ev.id]||0)+1; });
+
+  data.events.forEach((ev,idx)=>{
+    const evErrors=[];const evWarnings=[];
+    const label=ev.name||(ev.id!=null?String(ev.id):`event #${idx+1}`);
+
+    if(ev.id==null||ev.id==='') evErrors.push('Missing required "id".');
+    else if(idCounts[ev.id]>1) evErrors.push(`Duplicate "id" — "${ev.id}" is used by ${idCounts[ev.id]} events.`);
+    if(!ev.name) evErrors.push('Missing required "name".');
+
+    const hasDate=ev.date!=null && ev.date!=='';
+    const hasRecurrence=Array.isArray(ev.recurrence)&&ev.recurrence.length>0;
+    const hasDatesArr=Array.isArray(ev.dates);
+    const hasDatesEntries=hasDatesArr&&ev.dates.length>0;
+
+    if(hasDate&&(hasRecurrence||hasDatesEntries)){
+      evErrors.push('"date" cannot coexist with "recurrence" or "dates" — these are mutually exclusive scheduling modes.');
+    }
+    if(!hasDate&&!hasRecurrence&&!hasDatesArr){
+      evErrors.push('No scheduling info present — event needs "date", "recurrence", or "dates".');
+    }
+
+    if(hasRecurrence){
+      ev.recurrence.forEach((rule,ri)=>{
+        if(!rule.pattern) evErrors.push(`recurrence[${ri}] is missing required "pattern".`);
+        else if(!KNOWN_PATTERNS.includes(rule.pattern)) evWarnings.push(`recurrence[${ri}] uses unrecognized pattern "${rule.pattern}".`);
+        if(rule.pattern==='monthly_week'&&(!rule.days||!rule.days.length)) evWarnings.push(`recurrence[${ri}] (monthly_week) has no "days" set.`);
+        if(rule.pattern==='annual'&&((rule.season_start&&!rule.season_end)||(!rule.season_start&&rule.season_end))) evWarnings.push(`recurrence[${ri}] has season_start without season_end, or vice versa.`);
+      });
+    }
+
+    if(ev.category!=null && !KNOWN_CATEGORIES.includes(ev.category)) evWarnings.push(`Unrecognized category "${ev.category}".`);
+    if(ev.price!=null && !KNOWN_PRICES.includes(ev.price)) evWarnings.push(`Unrecognized price value "${ev.price}".`);
+    if(Array.isArray(ev.vibe_tags)){
+      if(ev.vibe_tags.length>5) evWarnings.push(`${ev.vibe_tags.length} vibe_tags set — spec max is 5.`);
+      ev.vibe_tags.filter(t=>!KNOWN_VIBES.includes(t)).forEach(t=>evWarnings.push(`Unrecognized vibe tag "${t}".`));
+    }
+    if(Array.isArray(ev.exceptions)){
+      ev.exceptions.forEach((ex,xi)=>{
+        if(!ex.date) evErrors.push(`exceptions[${xi}] is missing required "date".`);
+        if(!ex.type||!KNOWN_EXCEPTION_TYPES.includes(ex.type)) evWarnings.push(`exceptions[${xi}] has unrecognized type "${ex.type}".`);
+        if(ex.type==='cancelled_range'&&!ex.date_end) evErrors.push(`exceptions[${xi}] (cancelled_range) is missing required "date_end".`);
+      });
+    }
+
+    if(evErrors.length||evWarnings.length) eventIssues[idx]={label,errors:evErrors,warnings:evWarnings};
+    evErrors.forEach(e=>errors.push(`Event "${label}": ${e}`));
+    evWarnings.forEach(w=>warnings.push(`Event "${label}": ${w}`));
+  });
+
+  return{errors,warnings,eventIssues};
+}
+
+function updateValidateBadge(){
+  const badge=document.getElementById('validateBadge');
+  if(!validationReport||(!validationReport.errors.length&&!validationReport.warnings.length)){badge.textContent='';badge.className='validate-badge';return;}
+  if(validationReport.errors.length){badge.textContent=validationReport.errors.length;badge.className='validate-badge has-errors';}
+  else{badge.textContent=validationReport.warnings.length;badge.className='validate-badge has-warnings';}
+}
+
+function renderValidate(){
+  const el=document.getElementById('validateView');el.innerHTML='';
+  const r=validationReport||{errors:[],warnings:[]};
+  const summary=document.createElement('div');
+  summary.className='validate-summary '+(r.errors.length?'bad':'ok');
+  summary.textContent=r.errors.length
+    ?`${r.errors.length} error${r.errors.length!==1?'s':''} found — this file does not pass .rcal spec v0.1 validation.`
+    :(r.warnings.length?`No spec violations. ${r.warnings.length} informational warning${r.warnings.length!==1?'s':''} below.`:'No spec violations or warnings. This file is fully valid.');
+  el.appendChild(summary);
+  if(r.errors.length){
+    const t=document.createElement('div');t.className='validate-section-title';t.textContent='Errors — spec violations, must be fixed';el.appendChild(t);
+    r.errors.forEach(msg=>{const d=document.createElement('div');d.className='validate-item err';d.textContent=msg;el.appendChild(d);});
+  }
+  if(r.warnings.length){
+    const t=document.createElement('div');t.className='validate-section-title';t.textContent='Warnings — informational, will still render';el.appendChild(t);
+    r.warnings.forEach(msg=>{const d=document.createElement('div');d.className='validate-item warn';d.textContent=msg;el.appendChild(d);});
+  }
+}
+
 // ─── Render ──────────────────────────────────────────────────────────
 function render(){
   document.getElementById('dropZone').style.display='none';
   document.getElementById('viewer').style.display='block';
 
   isSeasonalFile = detectSeasonal(strandData);
+  validationReport = validateStrand(strandData);
+  updateValidateBadge();
 
   const meta=strandData.meta||{};
   document.getElementById('strandTitle').textContent=meta.title||'Untitled Strand';
@@ -380,11 +514,18 @@ function getSpanForYear(rule, year){
 // ─── List View ───────────────────────────────────────────────────────
 function renderList(){
   const el=document.getElementById('listView');el.innerHTML='';
-  strandData.events.forEach(ev=>{
+  strandData.events.forEach((ev,idx)=>{
     const card=document.createElement('div');card.className='event-card';
     const color=catColor(ev.category);
     const tags=(ev.vibe_tags||[]).map(t=>`<span class="vibe-tag">${t}</span>`).join('');
-    card.innerHTML=`<div class="event-card-header"><div class="cat-dot" style="background:${color}"></div><div style="flex:1"><div class="event-name">${ev.name}</div><div class="event-schedule-summary">${schedSummary(ev)}</div>${tags?`<div class="event-tags">${tags}</div>`:''}</div><div class="expand-icon">›</div></div><div class="event-card-body">${buildDetailGrid(ev)}${buildOccurrences(ev)}</div>`;
+    const issues=validationReport&&validationReport.eventIssues[idx];
+    let issueBadge='';
+    if(issues){
+      const hasErr=issues.errors.length>0;
+      const msgs=[...issues.errors.map(e=>'ERROR: '+e),...issues.warnings.map(w=>'WARN: '+w)].join('\n');
+      issueBadge=`<span class="issue-badge ${hasErr?'issue-error':'issue-warning'}" title="${escapeAttr(msgs)}">${hasErr?'!':'⚠'}</span>`;
+    }
+    card.innerHTML=`<div class="event-card-header"><div class="cat-dot" style="background:${color}"></div><div style="flex:1"><div class="event-name">${ev.name||'(untitled event)'}${issueBadge}</div><div class="event-schedule-summary">${schedSummary(ev)}</div>${tags?`<div class="event-tags">${tags}</div>`:''}</div><div class="expand-icon">›</div></div><div class="event-card-body">${buildDetailGrid(ev)}${buildOccurrences(ev)}</div>`;
     card.querySelector('.event-card-header').addEventListener('click',()=>card.classList.toggle('open'));
     el.appendChild(card);
   });
@@ -422,11 +563,14 @@ function setView(v){
   document.getElementById('listView').style.display=v==='list'?'block':'none';
   document.getElementById('calView').style.display=v==='cal'?'block':'none';
   document.getElementById('seasonalView').style.display=v==='seasonal'?'block':'none';
+  document.getElementById('validateView').style.display=v==='validate'?'block':'none';
   document.getElementById('tabList').classList.toggle('active',v==='list');
   document.getElementById('tabCal').classList.toggle('active',v==='cal');
   document.getElementById('tabSeasonal').classList.toggle('active',v==='seasonal');
+  document.getElementById('tabValidate').classList.toggle('active',v==='validate');
   if(v==='cal')renderCal();
   if(v==='seasonal')renderSeasonal();
+  if(v==='validate')renderValidate();
 }
 
 // ─── SEASONAL VIEW ────────────────────────────────────────────────────
