@@ -295,6 +295,26 @@ const KNOWN_EXCEPTION_TYPES=['skip','cancelled_range','modified'];
 
 function escapeAttr(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');}
 
+// Escapes untrusted text for safe insertion into an innerHTML template literal
+// (as opposed to escapeAttr, which is for use inside a quoted HTML attribute).
+function escapeHtml(s){
+  if(s==null)return'';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Validates a URL before it's ever placed in an href. Resolves relative to the
+// current page, then only allows http:/https: through — blocks javascript:,
+// data:, and any other scheme that could execute on click.
+function safeUrl(u){
+  try{
+    const parsed=new URL(u,location.href);
+    if(parsed.protocol==='http:'||parsed.protocol==='https:')return parsed.href;
+    return null;
+  }catch(e){
+    return null;
+  }
+}
+
 // Hard-fail checks mirror the spec's stated fail conditions exactly (missing id/name,
 // duplicate id, missing pattern on a recurrence rule, one-off missing date, date
 // coexisting with recurrence/dates). Everything else — unknown category/tag/pattern,
@@ -517,7 +537,7 @@ function renderList(){
   strandData.events.forEach((ev,idx)=>{
     const card=document.createElement('div');card.className='event-card';
     const color=catColor(ev.category);
-    const tags=(ev.vibe_tags||[]).map(t=>`<span class="vibe-tag">${t}</span>`).join('');
+    const tags=(ev.vibe_tags||[]).map(t=>`<span class="vibe-tag">${escapeHtml(t)}</span>`).join('');
     const issues=validationReport&&validationReport.eventIssues[idx];
     let issueBadge='';
     if(issues){
@@ -525,7 +545,7 @@ function renderList(){
       const msgs=[...issues.errors.map(e=>'ERROR: '+e),...issues.warnings.map(w=>'WARN: '+w)].join('\n');
       issueBadge=`<span class="issue-badge ${hasErr?'issue-error':'issue-warning'}" title="${escapeAttr(msgs)}">${hasErr?'!':'⚠'}</span>`;
     }
-    card.innerHTML=`<div class="event-card-header"><div class="cat-dot" style="background:${color}"></div><div style="flex:1"><div class="event-name">${ev.name||'(untitled event)'}${issueBadge}</div><div class="event-schedule-summary">${schedSummary(ev)}</div>${tags?`<div class="event-tags">${tags}</div>`:''}</div><div class="expand-icon">›</div></div><div class="event-card-body">${buildDetailGrid(ev)}${buildOccurrences(ev)}</div>`;
+    card.innerHTML=`<div class="event-card-header"><div class="cat-dot" style="background:${color}"></div><div style="flex:1"><div class="event-name">${ev.name?escapeHtml(ev.name):'(untitled event)'}${issueBadge}</div><div class="event-schedule-summary">${escapeHtml(schedSummary(ev))}</div>${tags?`<div class="event-tags">${tags}</div>`:''}</div><div class="expand-icon">›</div></div><div class="event-card-body">${buildDetailGrid(ev)}${buildOccurrences(ev)}</div>`;
     card.querySelector('.event-card-header').addEventListener('click',()=>card.classList.toggle('open'));
     el.appendChild(card);
   });
@@ -533,13 +553,20 @@ function renderList(){
 function buildDetailGrid(ev){
   const rows=[];
   const row=(l,v,m)=>{if(v==null||v==='')return;rows.push(`<div class="detail-label">${l}</div><div class="detail-value${m?' mono':''}">${v}</div>`);};
-  row('id',ev.id,true);row('category',ev.category||'—');
-  row('price',ev.price?(ev.price+(ev.price_note?' · '+ev.price_note:'')):null);
-  if(ev.ticket_url)rows.push(`<div class="detail-label">tickets</div><div class="detail-value"><a href="${ev.ticket_url}" target="_blank" rel="noopener" style="color:var(--blue)">${ev.ticket_url}</a></div>`);
+  row('id',ev.id?escapeHtml(ev.id):null,true);row('category',ev.category?escapeHtml(ev.category):'—');
+  row('price',ev.price?escapeHtml(ev.price+(ev.price_note?' · '+ev.price_note:'')):null);
+  if(ev.ticket_url){
+    const safe=safeUrl(ev.ticket_url);
+    if(safe){
+      rows.push(`<div class="detail-label">tickets</div><div class="detail-value"><a href="${escapeAttr(safe)}" target="_blank" rel="noopener" style="color:var(--blue)">${escapeHtml(ev.ticket_url)}</a></div>`);
+    } else {
+      rows.push(`<div class="detail-label">tickets</div><div class="detail-value">${escapeHtml(ev.ticket_url)} <span style="opacity:.6">(unrecognized URL scheme — link disabled)</span></div>`);
+    }
+  }
   row('lead time',ev.lead_time_days!=null?ev.lead_time_days+' day(s)':null);
-  if(ev.description)rows.push(`<div class="detail-label">description</div><div class="detail-value">${ev.description}</div>`);
-  if(ev.notes)rows.push(`<div class="detail-label">notes</div><div class="detail-value">${ev.notes}</div>`);
-  if(ev.location){const l=ev.location;const s=[l.name,l.address,l.city,l.state].filter(Boolean).join(', ');if(s)row('location',s);}
+  if(ev.description)rows.push(`<div class="detail-label">description</div><div class="detail-value">${escapeHtml(ev.description)}</div>`);
+  if(ev.notes)rows.push(`<div class="detail-label">notes</div><div class="detail-value">${escapeHtml(ev.notes)}</div>`);
+  if(ev.location){const l=ev.location;const s=[l.name,l.address,l.city,l.state].filter(Boolean).join(', ');if(s)row('location',escapeHtml(s));}
   if(!rows.length)return'';
   return`<div class="detail-grid">${rows.join('')}</div>`;
 }
@@ -552,7 +579,7 @@ function buildOccurrences(ev){
     const past=o.date<today;const excType=o.exceptionType;
     let cls='occ-chip';if(past)cls+=' past';if(excType==='skip'||excType==='cancelled_range')cls+=' exception';if(excType==='modified')cls+=' modified';
     let label=o.date;if(o.time_start)label+=' '+fmt24(o.time_start);if(o.note)label+=' *';
-    return`<span class="${cls}" title="${o.note||''}">${label}</span>`;
+    return`<span class="${cls}" title="${escapeAttr(o.note||'')}">${label}</span>`;
   }).join('');
   return`<div class="occurrences-title">Upcoming occurrences</div><div class="occurrence-list">${chips}</div>`;
 }
@@ -645,7 +672,7 @@ function renderSeasonal(){
         // Tooltip
         const startStr=`${months[startMonth]} ${startDay}`;
         const endStr=`${months[endMonth]} ${endDay}`;
-        bar.title=`${ev.name}: ${fuzzyStart?'~':''}${startStr} – ${fuzzyEnd?'~':''}${endStr}`;
+        bar.title=`${escapeAttr(ev.name)}: ${fuzzyStart?'~':''}${startStr} – ${fuzzyEnd?'~':''}${endStr}`;
         bar.addEventListener('mouseenter',e=>showTooltip(e,{eventName:ev.name,date:`${fuzzyStart?'~':''}${startStr} – ${fuzzyEnd?'~':''}${endStr}`,color}));
         bar.addEventListener('mouseleave',hideTooltip);
 
@@ -717,7 +744,7 @@ function renderCal(){
     const num=document.createElement('div');num.className='cal-date-num';num.textContent=c.day;cell.appendChild(num);
     if(dateStr&&allOccs[dateStr]){
       const items=allOccs[dateStr];const max=3;
-      items.slice(0,max).forEach(item=>{const pill=document.createElement('span');pill.className='cal-event-pill';pill.style.background=item.color;pill.textContent=item.eventName;if(item.time_start)pill.title=fmt24(item.time_start)+(item.time_end?'–'+fmt24(item.time_end):'')+'· '+item.eventName;pill.addEventListener('mouseenter',e=>showTooltip(e,item));pill.addEventListener('mouseleave',hideTooltip);cell.appendChild(pill);});
+      items.slice(0,max).forEach(item=>{const pill=document.createElement('span');pill.className='cal-event-pill';pill.style.background=item.color;pill.textContent=item.eventName;if(item.time_start)pill.title=fmt24(item.time_start)+(item.time_end?'–'+fmt24(item.time_end):'')+'· '+escapeAttr(item.eventName);pill.addEventListener('mouseenter',e=>showTooltip(e,item));pill.addEventListener('mouseleave',hideTooltip);cell.appendChild(pill);});
       if(items.length>max){const more=document.createElement('div');more.className='cal-more';more.textContent='+'+(items.length-max)+' more';cell.appendChild(more);}
     }
     grid.appendChild(cell);
@@ -727,7 +754,7 @@ function renderCal(){
 // ─── Tooltip ─────────────────────────────────────────────────────────
 function showTooltip(e,item){
   const t=document.getElementById('tooltip');
-  t.innerHTML=`<div class="tooltip-name">${item.eventName||item.name||''}</div><div class="tooltip-detail">${item.date||''}</div>`;
+  t.innerHTML=`<div class="tooltip-name">${escapeHtml(item.eventName||item.name||'')}</div><div class="tooltip-detail">${escapeHtml(item.date||'')}</div>`;
   t.style.display='block';positionTooltip(e);
 }
 document.addEventListener('mousemove',e=>{if(document.getElementById('tooltip').style.display==='block')positionTooltip(e);});
