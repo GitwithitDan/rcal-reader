@@ -263,7 +263,7 @@ function tryParse(text){
   try {
     if(!text)throw new Error('Nothing to parse.');
     const data=JSON.parse(text);
-    if(!data.rcal)throw new Error('Missing required "rcal" key.');
+    if(typeof data.rcal!=='string'||!data.rcal.trim())throw new Error('Missing required "rcal" key (must be a non-empty string, e.g. "0.2").');
     if(!Array.isArray(data.events))throw new Error('Missing required "events" array.');
     strandData=data;
     render();
@@ -285,7 +285,35 @@ function detectSeasonal(data){
   }));
 }
 
-// ─── Validation (against .rcal spec v0.1) ─────────────────────────────
+// ─── Validation (against .rcal spec v0.2) ─────────────────────────────
+const KNOWN_VERSIONS=['0.1','0.2'];
+const ISO_DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
+function isValidIsoDate(s){
+  if(typeof s!=='string'||!ISO_DATE_RE.test(s))return false;
+  const[y,m,d]=s.split('-').map(Number);
+  const dt=new Date(y,m-1,d);
+  return dt.getFullYear()===y&&dt.getMonth()===m-1&&dt.getDate()===d;
+}
+// Spec: times are 24h "HH:MM", valid range 00:00–23:59.
+function isValidTime(t){return typeof t==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(t);}
+function localDateStr(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+// Spec day shorthands: full names, mon–sun, "weekday" (Mon–Fri), "weekend" (Sat/Sun); case-insensitive.
+function parseDayList(raw){
+  const full=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  const s3=['sun','mon','tue','wed','thu','fri','sat'];
+  const out=[];
+  (Array.isArray(raw)?raw:[]).forEach(d=>{
+    if(typeof d!=='string')return;
+    const dl=d.trim().toLowerCase();
+    if(dl==='weekday'||dl==='weekdays'){out.push(1,2,3,4,5);return;}
+    if(dl==='weekend'||dl==='weekends'){out.push(0,6);return;}
+    let i=full.indexOf(dl);if(i<0)i=s3.indexOf(dl);
+    if(i>=0)out.push(i);
+  });
+  return[...new Set(out)].sort((a,b)=>a-b);
+}
+// Fields the EventStrand reference implementation writes (all_day) are honored even though
+// the published spec does not list them; they are never treated as errors.
 const KNOWN_CATEGORIES=['music','food_drink','fitness','arts','education','community','market','sport','comedy','theater','spiritual','maintenance','personal','general'];
 const KNOWN_VIBES=['mellow','social','restless','curious','spontaneous','solo','celebratory','cozy','active','outdoor','indoor','free'];
 const KNOWN_PATTERNS=['daily','weekly','monthly_week','monthly_date','annual','weekdays'];
@@ -322,10 +350,11 @@ function safeUrl(u){
 function validateStrand(data){
   const errors=[];const warnings=[];const eventIssues={};
 
-  if(data.rcal!==undefined && String(data.rcal)!=='0.1'){
-    warnings.push(`Unrecognized rcal version "${data.rcal}" — this reader is built against spec v0.1.`);
+  if(data.rcal!==undefined && !KNOWN_VERSIONS.includes(String(data.rcal))){
+    warnings.push(`Unrecognized rcal version "${data.rcal}" — this reader is built against spec v0.2 (reads v0.1 and v0.2 files).`);
   }
   if(data.meta){
+    if(data.meta.live===true && !data.meta.source_url) warnings.push('meta.live is true but meta.source_url is missing — subscriber apps need it to poll for updates.');
     if(data.meta.type && !KNOWN_META_TYPES.includes(data.meta.type)){
       warnings.push(`meta.type "${data.meta.type}" is not one of the recognized types (${KNOWN_META_TYPES.join(', ')}).`);
     }
@@ -363,8 +392,25 @@ function validateStrand(data){
         if(!rule.pattern) evErrors.push(`recurrence[${ri}] is missing required "pattern".`);
         else if(!KNOWN_PATTERNS.includes(rule.pattern)) evWarnings.push(`recurrence[${ri}] uses unrecognized pattern "${rule.pattern}".`);
         if(rule.pattern==='monthly_week'&&(!rule.days||!rule.days.length)) evWarnings.push(`recurrence[${ri}] (monthly_week) has no "days" set.`);
+        if(rule.pattern==='monthly_week'&&!rule.month_week) evWarnings.push(`recurrence[${ri}] (monthly_week) has no "month_week" — treated as "first".`);
         if(rule.pattern==='annual'&&((rule.season_start&&!rule.season_end)||(!rule.season_start&&rule.season_end))) evWarnings.push(`recurrence[${ri}] has season_start without season_end, or vice versa.`);
+        ['time_start','time_end'].forEach(k=>{
+          if(rule[k]!=null&&!isValidTime(rule[k])) evWarnings.push(`recurrence[${ri}] ${k} "${rule[k]}" is outside 00:00–23:59 (or not HH:MM) — this rule is skipped.`);
+        });
       });
+    }
+
+    if(hasDatesArr){
+      let validCount=0,futureCount=0;const today=todayStr();
+      ev.dates.forEach((d,di)=>{
+        const ds=(typeof d==='string')?d:(d&&typeof d==='object'?d.date:undefined);
+        if(!isValidIsoDate(ds)){evWarnings.push(`dates[${di}] is not a valid ISO 8601 date — skipped.`);return;}
+        validCount++;if(ds>=today)futureCount++;
+        if(d&&typeof d==='object'){
+          ['time_start','time_end'].forEach(k=>{if(d[k]!=null&&!isValidTime(d[k]))evWarnings.push(`dates[${di}] ${k} "${d[k]}" is outside 00:00–23:59 — ignored.`);});
+        }
+      });
+      if(validCount>0&&futureCount===0) evWarnings.push('every entry in "dates" is in the past.');
     }
 
     if(ev.category!=null && !KNOWN_CATEGORIES.includes(ev.category)) evWarnings.push(`Unrecognized category "${ev.category}".`);
@@ -375,9 +421,12 @@ function validateStrand(data){
     }
     if(Array.isArray(ev.exceptions)){
       ev.exceptions.forEach((ex,xi)=>{
-        if(!ex.date) evErrors.push(`exceptions[${xi}] is missing required "date".`);
+        // Spec hard-fail list does not include exceptions, so problems here warn and the exception is ignored.
+        if(!ex.date) evWarnings.push(`exceptions[${xi}] is missing required "date" — ignored.`);
+        else if(!isValidIsoDate(ex.date)) evWarnings.push(`exceptions[${xi}] date "${ex.date}" is not a valid ISO 8601 date — ignored.`);
         if(!ex.type||!KNOWN_EXCEPTION_TYPES.includes(ex.type)) evWarnings.push(`exceptions[${xi}] has unrecognized type "${ex.type}".`);
-        if(ex.type==='cancelled_range'&&!ex.date_end) evErrors.push(`exceptions[${xi}] (cancelled_range) is missing required "date_end".`);
+        if(ex.type==='cancelled_range'&&!ex.date_end) evWarnings.push(`exceptions[${xi}] (cancelled_range) has no "date_end" — treated as a single skipped date.`);
+        if(ex.date_end&&!isValidIsoDate(ex.date_end)) evWarnings.push(`exceptions[${xi}] date_end "${ex.date_end}" is not a valid ISO 8601 date — ignored.`);
       });
     }
 
@@ -436,7 +485,8 @@ function render(){
   if(meta.timezone)add(meta.timezone);
   if(meta.live)add('● live','live');
   if(isSeasonalFile)add('◈ seasonal','seasonal');
-  if(meta.location?.city)add(meta.location.city+(meta.location.state?', '+meta.location.state:''));
+  if(meta.location&&typeof meta.location==='object'&&meta.location.city)add(meta.location.city+(meta.location.state?', '+meta.location.state:''));
+  else if(typeof meta.location==='string'&&meta.location.trim())add(meta.location.trim());
 
   document.getElementById('eventCount').textContent=strandData.events.length+' event'+(strandData.events.length!==1?'s':'');
 
@@ -550,6 +600,13 @@ function renderList(){
     el.appendChild(card);
   });
 }
+// Location may be a spec object {name,address,city,state,country,...} or a plain string.
+function locText(l){
+  if(!l)return'';
+  if(typeof l==='string')return l.trim();
+  if(typeof l!=='object')return'';
+  return[l.name,l.address,l.city,l.state,l.country].filter(Boolean).join(', ');
+}
 function buildDetailGrid(ev){
   const rows=[];
   const row=(l,v,m)=>{if(v==null||v==='')return;rows.push(`<div class="detail-label">${l}</div><div class="detail-value${m?' mono':''}">${v}</div>`);};
@@ -566,7 +623,12 @@ function buildDetailGrid(ev){
   row('lead time',ev.lead_time_days!=null?ev.lead_time_days+' day(s)':null);
   if(ev.description)rows.push(`<div class="detail-label">description</div><div class="detail-value">${escapeHtml(ev.description)}</div>`);
   if(ev.notes)rows.push(`<div class="detail-label">notes</div><div class="detail-value">${escapeHtml(ev.notes)}</div>`);
-  if(ev.location){const l=ev.location;const s=[l.name,l.address,l.city,l.state].filter(Boolean).join(', ');if(s)row('location',escapeHtml(s));}
+  // Spec: an event location replaces meta.location entirely (no partial merge); otherwise meta.location is inherited.
+  const locObj=ev.location?ev.location:(strandData.meta&&strandData.meta.location);
+  const locS=locText(locObj);
+  if(locS)row('location',escapeHtml(locS)+(ev.location?'':' <span style="opacity:.6">(from meta)</span>'));
+  if(locObj&&typeof locObj==='object'&&locObj.notes)row('location notes',escapeHtml(locObj.notes));
+  if(ev.all_day)row('all day','yes');
   if(!rows.length)return'';
   return`<div class="detail-grid">${rows.join('')}</div>`;
 }
@@ -578,8 +640,9 @@ function buildOccurrences(ev){
   const chips=occs.map(o=>{
     const past=o.date<today;const excType=o.exceptionType;
     let cls='occ-chip';if(past)cls+=' past';if(excType==='skip'||excType==='cancelled_range')cls+=' exception';if(excType==='modified')cls+=' modified';
-    let label=o.date;if(o.time_start)label+=' '+fmt24(o.time_start);if(o.note)label+=' *';
-    return`<span class="${cls}" title="${escapeAttr(o.note||'')}">${label}</span>`;
+    let label=o.date;if(o.all_day)label+=' all day';else if(o.time_start)label+=' '+fmt24(o.time_start);if(o.note)label+=' *';
+    const tip=[o.note,o.location?'@ '+locText(o.location):''].filter(Boolean).join(' — ');
+    return`<span class="${cls}" title="${escapeAttr(tip)}">${escapeHtml(label)}</span>`;
   }).join('');
   return`<div class="occurrences-title">Upcoming occurrences</div><div class="occurrence-list">${chips}</div>`;
 }
@@ -764,66 +827,176 @@ function hideTooltip(){document.getElementById('tooltip').style.display='none';}
 // ─── Occurrence Engine ────────────────────────────────────────────────
 const DAYS=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
 
+// Whole-day number (timezone/DST-safe) used to anchor `every` intervals.
+function dayNum(d){return Math.floor(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/86400000);}
+function isoToDate(s){const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);}
+
 function getOccurrences(ev,maxFuture){
   const results=[];const today=todayStr();
   const[ty,tm,td]=today.split('-').map(Number);
   const todayDate=new Date(ty,tm-1,td);
+  const evTiming=ev.all_day?{all_day:true}:{time_start:ev.time_start,time_end:ev.time_end};
+  const hasRec=Array.isArray(ev.recurrence)&&ev.recurrence.length>0;
+  const hasDates=Array.isArray(ev.dates)&&ev.dates.length>0;
 
-  if(ev.date&&!ev.recurrence&&!ev.dates)results.push({date:ev.date,time_start:ev.time_start,time_end:ev.time_end});
-  if(ev.dates){ev.dates.forEach(d=>{if(typeof d==='string')results.push({date:d,time_start:ev.time_start,time_end:ev.time_end});else if(d.date)results.push({date:d.date,time_start:d.time_start||ev.time_start,time_end:d.time_end||ev.time_end,note:d.note});});}
-  if(ev.recurrence){
+  if(ev.date&&!hasRec&&!hasDates&&isValidIsoDate(ev.date))results.push({date:ev.date,...evTiming});
+  if(Array.isArray(ev.dates)){
+    ev.dates.forEach(d=>{
+      // Spec: an invalid entry is skipped (with a warning in the Validate tab), never a parse failure.
+      if(typeof d==='string'){if(isValidIsoDate(d))results.push({date:d,...evTiming});return;}
+      if(!d||typeof d!=='object'||!isValidIsoDate(d.date))return;
+      const o={date:d.date};
+      if(d.all_day){o.all_day=true;}
+      else{
+        const ts=isValidTime(d.time_start)?d.time_start:ev.time_start;
+        const te=isValidTime(d.time_end)?d.time_end:ev.time_end;
+        if(ev.all_day&&!isValidTime(d.time_start)&&!isValidTime(d.time_end))o.all_day=true;
+        else{o.time_start=ts;o.time_end=te;}
+      }
+      if(d.note)o.note=d.note;
+      if(d.location)o.location=d.location;
+      results.push(o);
+    });
+  }
+  if(hasRec){
     const horizon=new Date(todayDate);horizon.setMonth(horizon.getMonth()+6);
     const start=new Date(todayDate);start.setMonth(start.getMonth()-2);
-    ev.recurrence.forEach(rule=>{expandRule(rule,start,horizon).forEach(o=>results.push(o));});
+    ev.recurrence.forEach(rule=>{expandRule(rule,start,horizon,ev).forEach(o=>results.push(o));});
   }
-  const exceptions=ev.exceptions||[];const exMap={};
-  exceptions.forEach(ex=>{
+
+  // Exceptions are a post-processing layer over the generated occurrences.
+  const exMap={};
+  (Array.isArray(ev.exceptions)?ev.exceptions:[]).forEach(ex=>{
+    if(!ex||!isValidIsoDate(ex.date))return;
     if(ex.type==='skip'||ex.type==='modified')exMap[ex.date]=ex;
-    if(ex.type==='cancelled_range'){let cur=new Date(ex.date+'T00:00:00');const end=new Date(ex.date_end+'T00:00:00');while(cur<=end){exMap[cur.toISOString().slice(0,10)]=ex;cur.setDate(cur.getDate()+1);}}
+    else if(ex.type==='cancelled_range'){
+      const endStr=isValidIsoDate(ex.date_end)?ex.date_end:ex.date; // no date_end: single date
+      const cur=isoToDate(ex.date);const end=isoToDate(endStr);let guard=0;
+      while(cur<=end&&guard++<3660){exMap[localDateStr(cur)]=ex;cur.setDate(cur.getDate()+1);}
+    }
   });
-  const final=results.map(o=>{const ex=exMap[o.date];if(!ex)return o;if(ex.type==='skip'||ex.type==='cancelled_range')return{...o,exceptionType:ex.type,note:ex.note};if(ex.type==='modified')return{...o,exceptionType:'modified',time_start:ex.time_start||o.time_start,time_end:ex.time_end||o.time_end,note:ex.note};return o;});
+  const final=results.map(o=>{
+    const ex=exMap[o.date];if(!ex)return o;
+    if(ex.type==='skip'||ex.type==='cancelled_range')return{...o,exceptionType:ex.type,note:ex.note};
+    const m={...o,exceptionType:'modified',note:ex.note||o.note};
+    if(isValidTime(ex.time_start)||isValidTime(ex.time_end)){
+      delete m.all_day;
+      if(isValidTime(ex.time_start))m.time_start=ex.time_start;
+      if(isValidTime(ex.time_end))m.time_end=ex.time_end;
+    }
+    if(ex.location)m.location=ex.location;
+    return m;
+  });
   final.sort((a,b)=>a.date.localeCompare(b.date));
   const future=final.filter(o=>o.date>=today&&o.exceptionType!=='skip'&&o.exceptionType!=='cancelled_range');
   const past=final.filter(o=>o.date<today).slice(-3);
   return[...past,...future.slice(0,maxFuture)];
 }
 
-function expandRule(rule,start,end){
-  const results=[];const every=rule.every||1;
-  const seasonStart=rule.season_start?MON3[rule.season_start.toLowerCase()]:null;
-  const seasonEnd=rule.season_end?MON3[rule.season_end.toLowerCase()]:null;
-  const seasonStartDay=rule.season_start_day||1;
-  const seasonEndDay=rule.season_end_day||null;
+function expandRule(rule,start,end,ev){
+  const results=[];
+  if(!rule||typeof rule!=='object')return results;
+  const every=Math.max(1,parseInt(rule.every,10)||1);
+  // Spec: times outside 00:00–23:59 reject the rule (per-rule, with a warning shown in Validate).
+  if((rule.time_start!=null&&!isValidTime(rule.time_start))||(rule.time_end!=null&&!isValidTime(rule.time_end)))return results;
+  const timing=rule.all_day?{all_day:true}:{time_start:rule.time_start,time_end:rule.time_end};
 
+  // Seasonal window (month + optional day), inclusive; wraps the year end when start > end (e.g. nov–feb).
+  const hasStart=!!rule.season_start&&MON3[String(rule.season_start).toLowerCase()]!==undefined;
+  const hasEnd=!!rule.season_end&&MON3[String(rule.season_end).toLowerCase()]!==undefined;
+  const sm=hasStart?MON3[String(rule.season_start).toLowerCase()]:0;
+  const sd=hasStart?(rule.season_start_day||1):1;
+  const em=hasEnd?MON3[String(rule.season_end).toLowerCase()]:11;
+  const ed=hasEnd?(rule.season_end_day||31):31;
+  const sKey=sm*100+sd,eKey=em*100+ed;
   function inSeason(d){
-    if(seasonStart==null)return true;
-    const m=d.getMonth(),day=d.getDate();
-    let inRange;
-    if(seasonStart<=seasonEnd){inRange=m>seasonStart||(m===seasonStart&&day>=seasonStartDay)||(m<seasonEnd)||(m===seasonEnd&&(!seasonEndDay||day<=seasonEndDay));}
-    else{inRange=m>seasonStart||(m===seasonStart&&day>=seasonStartDay)||m<seasonEnd||(m===seasonEnd&&(!seasonEndDay||day<=seasonEndDay));}
-    if(seasonStart<=seasonEnd){inRange=(m>seasonStart||(m===seasonStart&&day>=seasonStartDay))&&(m<seasonEnd||(m===seasonEnd&&(!seasonEndDay||day<=seasonEndDay)));}
-    return inRange;
+    if(!hasStart&&!hasEnd)return true;
+    const k=d.getMonth()*100+d.getDate();
+    return sKey<=eKey?(k>=sKey&&k<=eKey):(k>=sKey||k<=eKey);
   }
-  function dateStr(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
-  function addOcc(d){if(!inSeason(d))return;const s=dateStr(d);if(rule.start_date&&s<rule.start_date)return;if(rule.end_date&&s>rule.end_date)return;results.push({date:s,time_start:rule.time_start,time_end:rule.time_end});}
+  function dateStr(d){return localDateStr(d);}
+  function addOcc(d){
+    if(!inSeason(d))return;
+    const s=dateStr(d);
+    if(isValidIsoDate(rule.start_date)&&s<rule.start_date)return;
+    if(isValidIsoDate(rule.end_date)&&s>rule.end_date)return;
+    results.push({date:s,...timing});
+  }
+
+  // `every` is anchored to rule.start_date when present, otherwise to a fixed epoch, so which
+  // occurrences fall on "every other" week never shifts with the day the file is viewed.
+  const anchor=isValidIsoDate(rule.start_date)?isoToDate(rule.start_date):new Date(1970,0,4); // 1970-01-04 is a Sunday
+  const anchorSunday=new Date(anchor);anchorSunday.setDate(anchor.getDate()-anchor.getDay());
+  const mod=(a,n)=>((a%n)+n)%n;
 
   const p=rule.pattern;
-  if(p==='daily'){let cur=new Date(start),count=0;while(cur<=end){if(count%every===0)addOcc(new Date(cur));cur.setDate(cur.getDate()+1);count++;}}
-  else if(p==='weekly'||p==='weekdays'){
-    let targetDays;
-    if(p==='weekdays')targetDays=[1,2,3,4,5];
-    else{const raw=rule.days||[];targetDays=raw.flatMap(d=>{const dl=d.toLowerCase();if(dl==='weekday')return[1,2,3,4,5];if(dl==='weekend')return[0,6];const idx=DAYS.indexOf(dl);if(idx>=0)return[idx];const s3=['sun','mon','tue','wed','thu','fri','sat'];const i3=s3.indexOf(dl.slice(0,3));return i3>=0?[i3]:[];});}
-    let cur=new Date(start);cur.setDate(cur.getDate()-cur.getDay());let weekCount=0;
-    while(cur<=end){if(weekCount%every===0){targetDays.forEach(dow=>{const d=new Date(cur);d.setDate(d.getDate()+dow);if(d>=start&&d<=end)addOcc(d);});}cur.setDate(cur.getDate()+7);weekCount++;}
+  if(p==='daily'){
+    const a=dayNum(anchor);
+    const cur=new Date(start);
+    while(cur<=end){if(mod(dayNum(cur)-a,every)===0)addOcc(new Date(cur));cur.setDate(cur.getDate()+1);}
   }
-  else if(p==='monthly_date'){const dom=rule.month_date;let cur=new Date(start.getFullYear(),start.getMonth(),1),mc=0;while(cur<=end){if(mc%every===0){const d=new Date(cur.getFullYear(),cur.getMonth(),dom);if(d.getMonth()===cur.getMonth()&&d>=start&&d<=end)addOcc(d);}cur.setMonth(cur.getMonth()+1);mc++;}}
-  else if(p==='monthly_week'){const wm={first:0,second:1,third:2,fourth:3,last:-1};const which=wm[rule.month_week||'first'];const raw=rule.days||[];const targetDay=raw.length?DAYS.indexOf(raw[0].toLowerCase()):0;let cur=new Date(start.getFullYear(),start.getMonth(),1);
-    while(cur<=end){let d;if(which===-1){const ld=new Date(cur.getFullYear(),cur.getMonth()+1,0);d=new Date(ld);while(d.getDay()!==targetDay)d.setDate(d.getDate()-1);}else{d=new Date(cur.getFullYear(),cur.getMonth(),1);while(d.getDay()!==targetDay)d.setDate(d.getDate()+1);d.setDate(d.getDate()+which*7);if(d.getMonth()!==cur.getMonth()){cur.setMonth(cur.getMonth()+1);continue;}}if(d>=start&&d<=end)addOcc(d);cur.setMonth(cur.getMonth()+1);}
+  else if(p==='weekly'||p==='weekdays'){
+    const targetDays=p==='weekdays'?[1,2,3,4,5]:parseDayList(rule.days);
+    const aSun=dayNum(anchorSunday);
+    const cur=new Date(start);cur.setDate(cur.getDate()-cur.getDay());
+    while(cur<=end){
+      if(mod(Math.round((dayNum(cur)-aSun)/7),every)===0){
+        targetDays.forEach(dow=>{const d=new Date(cur);d.setDate(d.getDate()+dow);if(d>=start&&d<=end)addOcc(d);});
+      }
+      cur.setDate(cur.getDate()+7);
+    }
+  }
+  else if(p==='monthly_date'){
+    const dom=parseInt(rule.month_date,10);
+    if(!(dom>=1&&dom<=31))return results;
+    const cur=new Date(start.getFullYear(),start.getMonth(),1);
+    while(cur<=end){
+      const mi=(cur.getFullYear()*12+cur.getMonth())-(anchor.getFullYear()*12+anchor.getMonth());
+      if(mod(mi,every)===0){
+        const d=new Date(cur.getFullYear(),cur.getMonth(),dom);
+        if(d.getMonth()===cur.getMonth()&&d>=start&&d<=end)addOcc(d); // day missing this month (e.g. 31 in April) is skipped
+      }
+      cur.setMonth(cur.getMonth()+1);
+    }
+  }
+  else if(p==='monthly_week'){
+    const wm={first:0,second:1,third:2,fourth:3,last:-1};
+    const key=String(rule.month_week||'first').toLowerCase();
+    const which=wm[key]!==undefined?wm[key]:0; // missing/unknown month_week is treated as "first"
+    const targetDays=parseDayList(rule.days);
+    const cur=new Date(start.getFullYear(),start.getMonth(),1);
+    while(cur<=end){
+      const mi=(cur.getFullYear()*12+cur.getMonth())-(anchor.getFullYear()*12+anchor.getMonth());
+      if(mod(mi,every)===0){
+        targetDays.forEach(dow=>{
+          let d;
+          if(which===-1){
+            d=new Date(cur.getFullYear(),cur.getMonth()+1,0);
+            d.setDate(d.getDate()-mod(d.getDay()-dow,7));
+          }else{
+            d=new Date(cur.getFullYear(),cur.getMonth(),1);
+            d.setDate(d.getDate()+mod(dow-d.getDay(),7)+which*7);
+            if(d.getMonth()!==cur.getMonth())return;
+          }
+          if(d>=start&&d<=end)addOcc(d);
+        });
+      }
+      cur.setMonth(cur.getMonth()+1);
+    }
   }
   else if(p==='annual'){
-    // For span-style annual rules, just mark the start day for occurrence view
-    const sm=seasonStart??0;const sd_=seasonStartDay;
-    for(let y=start.getFullYear();y<=end.getFullYear();y++){const d=new Date(y,sm,sd_);if(d>=start&&d<=end)results.push({date:dateStr(d),time_start:rule.time_start,time_end:rule.time_end});}
+    // Day-of-year: season_start(+_day) or month_date for dated rules (e.g. a birthday);
+    // otherwise an MM-DD / ISO date on the event. Span-style rules just mark their start day here.
+    let am,ad;
+    if(hasStart){am=sm;ad=parseInt(rule.month_date,10)||sd;}
+    else{
+      const m=/^(?:\d{4}-)?(\d{2})-(\d{2})$/.exec(String((ev&&ev.date)||''));
+      if(m){am=+m[1]-1;ad=+m[2];}else{am=0;ad=parseInt(rule.month_date,10)||1;}
+    }
+    for(let y=start.getFullYear();y<=end.getFullYear();y++){
+      const d=new Date(y,am,ad);
+      if(d.getMonth()===am&&d>=start&&d<=end)addOcc(d);
+    }
   }
   return results;
 }
