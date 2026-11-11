@@ -325,7 +325,7 @@ footer a:hover { color: var(--ink); }
 
   <!-- HERO -->
   <div class="hero">
-    <div class="eyebrow">Open Format · v0.2 · Free to Use</div>
+    <div class="eyebrow">Open Format · Free to Use</div>
     <h1>The recurring event file<br><em>nobody knew they needed</em></h1>
     <p class="hero-desc">
       .rcal is a simple, open file format for describing events that repeat —
@@ -400,7 +400,7 @@ footer a:hover { color: var(--ink); }
   <section>
     <h2>How it works</h2>
     <p>
-      Every .rcal file has three parts: a version number, an optional info block about the publisher, and a list of events.
+      Every .rcal file has three parts: a format marker, an optional info block about the publisher, and a list of events.
     </p>
 
     <h3>The info block (meta)</h3>
@@ -455,7 +455,11 @@ footer a:hover { color: var(--ink); }
       </div>
       <div class="field-row">
         <div class="field-name">date</div>
-        <div class="field-desc">A single date for one-off events. Can't be used alongside recurrence or dates.</div>
+        <div class="field-desc">A single date. Works on its own for a one-off event, or alongside recurrence and dates.</div>
+      </div>
+      <div class="field-row">
+        <div class="field-name">no_time</div>
+        <div class="field-desc">True when no specific time applies — all-day, untimed, or not applicable. Times are ignored for that event, rule, or date.</div>
       </div>
       <div class="field-row">
         <div class="field-name">exceptions</div>
@@ -494,7 +498,7 @@ footer a:hover { color: var(--ink); }
     </div>
 
     <div class="callout" style="margin-top:24px;">
-      Recurrence rules and a curated date list can coexist on the same event — useful for a regular weekly night that also has some confirmed extra dates. A single date, however, can't be mixed with either.
+      Recurrence rules and a curated date list can coexist on the same event — useful for a regular weekly night that also has some confirmed extra dates. A single date can join them too, and a lone date is a perfectly valid schedule.
     </div>
   </section>
 
@@ -548,7 +552,7 @@ footer a:hover { color: var(--ink); }
   <section>
     <h2>Seasonal spans &amp; fuzzy dates</h2>
     <p>
-      Not every recurring thing happens on a specific day of the week. Some things are seasons — summer, tax season, a sports league, a farmers market window. .rcal v0.2 adds support for describing these as <strong>span-style events</strong>: a start and end point rather than a list of occurrences.
+      Not every recurring thing happens on a specific day of the week. Some things are seasons — summer, tax season, a sports league, a farmers market window. .rcal supports describing these as <strong>span-style events</strong>: a start and end point rather than a list of occurrences.
     </p>
     <p>
       Two new fields on recurrence rules make this possible: <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">season_start_day</code> and <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">season_end_day</code> let you specify the exact day within a month — not just the month itself. Pair them with the existing <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">season_start</code> and <code style="font-family:var(--mono);font-size:13px;background:var(--surface);padding:1px 5px;border-radius:3px;">season_end</code> fields for full precision.
@@ -595,7 +599,7 @@ footer a:hover { color: var(--ink); }
 <div class="page">
   <footer>
     <span>A resource by <a href="https://dtdm.us">Dan the Digital Man</a></span>
-    <span>.rcal v0.2 · CC0 — public domain, no license required</span>
+    <span>.rcal · CC0 — public domain, no license required</span>
   </footer>
 </div>
 
@@ -603,7 +607,7 @@ footer a:hover { color: var(--ink); }
 // Animated snippet
 const lines = [
   `<span class="tok-punct">{</span>`,
-  `  <span class="tok-key">"rcal"</span><span class="tok-punct">:</span> <span class="tok-str">"0.1"</span><span class="tok-punct">,</span>`,
+  `  <span class="tok-key">"rcal"</span><span class="tok-punct">:</span> <span class="tok-str">"strand"</span><span class="tok-punct">,</span>`,
   `  <span class="tok-key">"meta"</span><span class="tok-punct">:</span> <span class="tok-punct">{</span>`,
   `    <span class="tok-key">"title"</span><span class="tok-punct">:</span> <span class="tok-str">"The Rusty Nail"</span><span class="tok-punct">,</span>`,
   `    <span class="tok-key">"type"</span><span class="tok-punct">:</span> <span class="tok-str">"venue"</span><span class="tok-punct">,</span>`,

@@ -178,7 +178,7 @@
     <input type="file" id="fileInput" accept=".rcal,.json">
   </div>
   <div class="divider-row">or paste JSON</div>
-  <textarea class="paste-area" id="pasteArea" placeholder='{ "rcal": "0.1", "events": [ ... ] }'></textarea>
+  <textarea class="paste-area" id="pasteArea" placeholder='{ "rcal": "strand", "events": [ ... ] }'></textarea>
   <button class="parse-btn" id="parseBtn">Parse →</button>
   <div class="error-msg" id="errorMsg"></div>
 </div>
@@ -263,7 +263,7 @@ function tryParse(text){
   try {
     if(!text)throw new Error('Nothing to parse.');
     const data=JSON.parse(text);
-    if(typeof data.rcal!=='string'||!data.rcal.trim())throw new Error('Missing required "rcal" key (must be a non-empty string, e.g. "0.2").');
+    if(typeof data.rcal!=='string'||!data.rcal.trim())throw new Error('Missing required "rcal" key (must be a non-empty string, e.g. "strand").');
     if(!Array.isArray(data.events))throw new Error('Missing required "events" array.');
     strandData=data;
     render();
@@ -285,8 +285,10 @@ function detectSeasonal(data){
   }));
 }
 
-// ─── Validation (against .rcal spec v0.2) ─────────────────────────────
-const KNOWN_VERSIONS=['0.1','0.2'];
+// ─── Validation (against the .rcal spec) ──────────────────────────────
+// no_time: no specific time applies (all-day, untimed, or not applicable). The older
+// name all_day is still read; it is never treated as an error.
+function hasNoTime(o){return !!(o&&(o.no_time||o.all_day));}
 const ISO_DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
 function isValidIsoDate(s){
   if(typeof s!=='string'||!ISO_DATE_RE.test(s))return false;
@@ -312,8 +314,6 @@ function parseDayList(raw){
   });
   return[...new Set(out)].sort((a,b)=>a-b);
 }
-// Fields the EventStrand reference implementation writes (all_day) are honored even though
-// the published spec does not list them; they are never treated as errors.
 const KNOWN_CATEGORIES=['music','food_drink','fitness','arts','education','community','market','sport','comedy','theater','spiritual','maintenance','personal','general'];
 const KNOWN_VIBES=['mellow','social','restless','curious','spontaneous','solo','celebratory','cozy','active','outdoor','indoor','free'];
 const KNOWN_PATTERNS=['daily','weekly','monthly_week','monthly_date','annual','weekdays'];
@@ -350,9 +350,6 @@ function safeUrl(u){
 function validateStrand(data){
   const errors=[];const warnings=[];const eventIssues={};
 
-  if(data.rcal!==undefined && !KNOWN_VERSIONS.includes(String(data.rcal))){
-    warnings.push(`Unrecognized rcal version "${data.rcal}" — this reader is built against spec v0.2 (reads v0.1 and v0.2 files).`);
-  }
   if(data.meta){
     if(data.meta.live===true && !data.meta.source_url) warnings.push('meta.live is true but meta.source_url is missing — subscriber apps need it to poll for updates.');
     if(data.meta.type && !KNOWN_META_TYPES.includes(data.meta.type)){
@@ -380,9 +377,6 @@ function validateStrand(data){
     const hasDatesArr=Array.isArray(ev.dates);
     const hasDatesEntries=hasDatesArr&&ev.dates.length>0;
 
-    if(hasDate&&(hasRecurrence||hasDatesEntries)){
-      evErrors.push('"date" cannot coexist with "recurrence" or "dates" — these are mutually exclusive scheduling modes.');
-    }
     if(!hasDate&&!hasRecurrence&&!hasDatesArr){
       evErrors.push('No scheduling info present — event needs "date", "recurrence", or "dates".');
     }
@@ -451,7 +445,7 @@ function renderValidate(){
   const summary=document.createElement('div');
   summary.className='validate-summary '+(r.errors.length?'bad':'ok');
   summary.textContent=r.errors.length
-    ?`${r.errors.length} error${r.errors.length!==1?'s':''} found — this file does not pass .rcal spec v0.1 validation.`
+    ?`${r.errors.length} error${r.errors.length!==1?'s':''} found — this file does not pass .rcal validation.`
     :(r.warnings.length?`No spec violations. ${r.warnings.length} informational warning${r.warnings.length!==1?'s':''} below.`:'No spec violations or warnings. This file is fully valid.');
   el.appendChild(summary);
   if(r.errors.length){
@@ -480,7 +474,6 @@ function render(){
   const metaEl=document.getElementById('strandMeta');
   metaEl.innerHTML='';
   const add=(label,cls)=>{const p=document.createElement('span');p.className='meta-pill'+(cls?' '+cls:'');p.textContent=label;metaEl.appendChild(p);};
-  add('rcal v'+strandData.rcal);
   if(meta.type)add(meta.type);
   if(meta.timezone)add(meta.timezone);
   if(meta.live)add('● live','live');
@@ -628,7 +621,7 @@ function buildDetailGrid(ev){
   const locS=locText(locObj);
   if(locS)row('location',escapeHtml(locS)+(ev.location?'':' <span style="opacity:.6">(from meta)</span>'));
   if(locObj&&typeof locObj==='object'&&locObj.notes)row('location notes',escapeHtml(locObj.notes));
-  if(ev.all_day)row('all day','yes');
+  if(hasNoTime(ev))row('no set time','yes');
   if(!rows.length)return'';
   return`<div class="detail-grid">${rows.join('')}</div>`;
 }
@@ -640,7 +633,7 @@ function buildOccurrences(ev){
   const chips=occs.map(o=>{
     const past=o.date<today;const excType=o.exceptionType;
     let cls='occ-chip';if(past)cls+=' past';if(excType==='skip'||excType==='cancelled_range')cls+=' exception';if(excType==='modified')cls+=' modified';
-    let label=o.date;if(o.all_day)label+=' all day';else if(o.time_start)label+=' '+fmt24(o.time_start);if(o.note)label+=' *';
+    let label=o.date;if(o.no_time)label+=' (no set time)';else if(o.time_start)label+=' '+fmt24(o.time_start);if(o.note)label+=' *';
     const tip=[o.note,o.location?'@ '+locText(o.location):''].filter(Boolean).join(' — ');
     return`<span class="${cls}" title="${escapeAttr(tip)}">${escapeHtml(label)}</span>`;
   }).join('');
@@ -835,22 +828,22 @@ function getOccurrences(ev,maxFuture){
   const results=[];const today=todayStr();
   const[ty,tm,td]=today.split('-').map(Number);
   const todayDate=new Date(ty,tm-1,td);
-  const evTiming=ev.all_day?{all_day:true}:{time_start:ev.time_start,time_end:ev.time_end};
+  const evTiming=hasNoTime(ev)?{no_time:true}:{time_start:ev.time_start,time_end:ev.time_end};
   const hasRec=Array.isArray(ev.recurrence)&&ev.recurrence.length>0;
   const hasDates=Array.isArray(ev.dates)&&ev.dates.length>0;
 
-  if(ev.date&&!hasRec&&!hasDates&&isValidIsoDate(ev.date))results.push({date:ev.date,...evTiming});
+  if(ev.date&&isValidIsoDate(ev.date))results.push({date:ev.date,...evTiming});
   if(Array.isArray(ev.dates)){
     ev.dates.forEach(d=>{
       // Spec: an invalid entry is skipped (with a warning in the Validate tab), never a parse failure.
       if(typeof d==='string'){if(isValidIsoDate(d))results.push({date:d,...evTiming});return;}
       if(!d||typeof d!=='object'||!isValidIsoDate(d.date))return;
       const o={date:d.date};
-      if(d.all_day){o.all_day=true;}
+      if(hasNoTime(d)){o.no_time=true;}
       else{
         const ts=isValidTime(d.time_start)?d.time_start:ev.time_start;
         const te=isValidTime(d.time_end)?d.time_end:ev.time_end;
-        if(ev.all_day&&!isValidTime(d.time_start)&&!isValidTime(d.time_end))o.all_day=true;
+        if(hasNoTime(ev)&&!isValidTime(d.time_start)&&!isValidTime(d.time_end))o.no_time=true;
         else{o.time_start=ts;o.time_end=te;}
       }
       if(d.note)o.note=d.note;
@@ -863,6 +856,10 @@ function getOccurrences(ev,maxFuture){
     const start=new Date(todayDate);start.setMonth(start.getMonth()-2);
     ev.recurrence.forEach(rule=>{expandRule(rule,start,horizon,ev).forEach(o=>results.push(o));});
   }
+
+  // date, dates and recurrence merge; drop exact duplicates (same day and timing).
+  {const seen=new Set();
+   for(let i=results.length-1;i>=0;i--){const o=results[i];const k=o.date+'|'+(o.no_time?'n':(o.time_start||'')+'-'+(o.time_end||''));if(seen.has(k))results.splice(i,1);else seen.add(k);}}
 
   // Exceptions are a post-processing layer over the generated occurrences.
   const exMap={};
@@ -880,7 +877,7 @@ function getOccurrences(ev,maxFuture){
     if(ex.type==='skip'||ex.type==='cancelled_range')return{...o,exceptionType:ex.type,note:ex.note};
     const m={...o,exceptionType:'modified',note:ex.note||o.note};
     if(isValidTime(ex.time_start)||isValidTime(ex.time_end)){
-      delete m.all_day;
+      delete m.no_time;
       if(isValidTime(ex.time_start))m.time_start=ex.time_start;
       if(isValidTime(ex.time_end))m.time_end=ex.time_end;
     }
@@ -899,7 +896,7 @@ function expandRule(rule,start,end,ev){
   const every=Math.max(1,parseInt(rule.every,10)||1);
   // Spec: times outside 00:00–23:59 reject the rule (per-rule, with a warning shown in Validate).
   if((rule.time_start!=null&&!isValidTime(rule.time_start))||(rule.time_end!=null&&!isValidTime(rule.time_end)))return results;
-  const timing=rule.all_day?{all_day:true}:{time_start:rule.time_start,time_end:rule.time_end};
+  const timing=hasNoTime(rule)?{no_time:true}:{time_start:rule.time_start,time_end:rule.time_end};
 
   // Seasonal window (month + optional day), inclusive; wraps the year end when start > end (e.g. nov–feb).
   const hasStart=!!rule.season_start&&MON3[String(rule.season_start).toLowerCase()]!==undefined;
