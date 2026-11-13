@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>.rcal Reader — rcal.dtdm.us</title>
+<meta name="description" content="Open any .rcal schedule file in your browser: list, calendar and seasonal views plus a validator. Nothing is uploaded — the file stays on your device.">
+<link rel="canonical" href="https://rcal.dtdm.us/reader/">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -32,6 +34,9 @@
   .logo-mark { width:28px;height:28px;background:var(--blue);border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;font-weight:500;color:#fff;flex-shrink:0; }
   .logo-text { font-family:var(--mono);font-size:14px;color:var(--muted); }
   .logo-text span { color:var(--text); }
+  .header-links { margin-left:auto;display:flex;gap:16px; }
+  .header-links a { color:var(--muted);font-size:13px;text-decoration:none;white-space:nowrap; }
+  .header-links a:hover { color:var(--text);text-decoration:underline; }
 
   #dropZone { margin:40px auto; max-width:680px; padding:0 24px; }
   .drop-area { border:2px dashed var(--border);border-radius:12px;padding:48px 32px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;position:relative; }
@@ -166,7 +171,11 @@
 
 <header>
   <div class="logo-mark">.rc</div>
-  <div class="logo-text"><span>.rcal</span> reader</div>
+  <h1 class="logo-text" style="margin:0;font-weight:inherit;"><span>.rcal</span> reader</h1>
+  <nav class="header-links" aria-label="Site">
+    <a href="/">About .rcal</a>
+    <a href="https://eventstrand.com/spec/" target="_blank" rel="noopener">Specification</a>
+  </nav>
 </header>
 
 <div id="dropZone">
@@ -175,7 +184,7 @@
     <h2>Drop an .rcal file</h2>
     <p>Drag and drop, or choose a file from your device</p>
     <button class="btn-upload" onclick="document.getElementById('fileInput').click()">Choose file</button>
-    <input type="file" id="fileInput" accept=".rcal,.json">
+    <input type="file" id="fileInput" accept=".rcal,.json" aria-label="Choose an .rcal file">
   </div>
   <div class="divider-row">or paste JSON</div>
   <textarea class="paste-area" id="pasteArea" placeholder='{ "rcal": "strand", "events": [ ... ] }'></textarea>
@@ -257,14 +266,28 @@ document.getElementById('resetBtn').addEventListener('click',()=>{
 });
 
 // ─── Parse ───────────────────────────────────────────────────────────
+let droppedEvents=0; // entries of events[] that were not objects
+let shapeNotes=[];  // schedule fields that were not lists
 function tryParse(text){
   const errEl=document.getElementById('errorMsg');
   errEl.style.display='none';
   try {
     if(!text)throw new Error('Nothing to parse.');
-    const data=JSON.parse(text);
+    let data;
+    try{data=JSON.parse(text);}catch(pe){throw new Error('This is not valid JSON: '+pe.message);}
+    if(!data||typeof data!=='object'||Array.isArray(data))throw new Error('This is valid JSON but not a .rcal object (expected { "rcal", "meta", "events" }).');
     if(typeof data.rcal!=='string'||!data.rcal.trim())throw new Error('Missing required "rcal" key (must be a non-empty string, e.g. "strand").');
     if(!Array.isArray(data.events))throw new Error('Missing required "events" array.');
+    // Be liberal: an entry that is not an object is set aside (and reported in Validate), never a crash.
+    const kept=data.events.filter(e=>e&&typeof e==='object'&&!Array.isArray(e));
+    droppedEvents=data.events.length-kept.length;
+    data.events=kept;
+    // A schedule field of the wrong shape is ignored for that event and reported in Validate.
+    shapeNotes=[];
+    kept.forEach((ev,i)=>{['recurrence','dates','exceptions'].forEach(k=>{
+      if(ev[k]!=null&&!Array.isArray(ev[k])){shapeNotes.push(`${ev.name||ev.id||('event #'+(i+1))}: "${k}" must be a list and was ignored.`);delete ev[k];}
+    });});
+    if(data.meta!=null&&(typeof data.meta!=='object'||Array.isArray(data.meta)))data.meta=undefined;
     strandData=data;
     render();
   } catch(e){errEl.textContent=e.message;errEl.style.display='block';}
@@ -359,6 +382,8 @@ function validateStrand(data){
   } else {
     warnings.push('meta object is missing — optional per spec, but recommended.');
   }
+  if(typeof droppedEvents==='number'&&droppedEvents>0) warnings.push(droppedEvents+' entr'+(droppedEvents===1?'y':'ies')+' in events[] '+(droppedEvents===1?'is':'are')+' not an object and '+(droppedEvents===1?'was':'were')+' ignored.');
+  if(typeof shapeNotes!=='undefined') shapeNotes.forEach(n=>warnings.push(n));
   if(!data.events.length) warnings.push('events array is empty — this strand has no events.');
 
   const idCounts={};
@@ -613,7 +638,7 @@ function buildDetailGrid(ev){
       rows.push(`<div class="detail-label">tickets</div><div class="detail-value">${escapeHtml(ev.ticket_url)} <span style="opacity:.6">(unrecognized URL scheme — link disabled)</span></div>`);
     }
   }
-  row('lead time',ev.lead_time_days!=null?ev.lead_time_days+' day(s)':null);
+  row('lead time',ev.lead_time_days!=null?escapeHtml(String(ev.lead_time_days))+' day(s)':null);
   if(ev.description)rows.push(`<div class="detail-label">description</div><div class="detail-value">${escapeHtml(ev.description)}</div>`);
   if(ev.notes)rows.push(`<div class="detail-label">notes</div><div class="detail-value">${escapeHtml(ev.notes)}</div>`);
   // Spec: an event location replaces meta.location entirely (no partial merge); otherwise meta.location is inherited.
